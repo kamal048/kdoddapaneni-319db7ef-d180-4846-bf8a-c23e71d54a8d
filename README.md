@@ -1,105 +1,178 @@
-# New Nx Repository
+# Task Management System — kdoddapaneni-319db7ef-d180-4846-bf8a-c23e71d54a8d
 
-<a alt="Nx logo" href="https://nx.dev" target="_blank" rel="noreferrer"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-logo.png" width="45"></a>
+A secure, full-stack Task Management System built with NestJS, Angular, and SQLite in an NX monorepo. Features JWT authentication and role-based access control (RBAC).
 
-✨ Your new, shiny [Nx workspace](https://nx.dev) is ready ✨.
+## Setup Instructions
 
-[Learn more about this workspace setup and its capabilities](https://nx.dev/nx-api/js?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or run `npx nx graph` to visually explore what was created. Now, let's get you up to speed!
-## Try the full Nx platform
-🚀 If you haven't connected to Nx Cloud yet, [complete your setup here](https://cloud.nx.app/setup/connect-workspace/guide). Get faster builds with remote caching, distributed task execution, and self-healing CI. [See how your workspace can benefit](#nx-cloud).
-## Generate a library
+### Prerequisites
+- Node.js v18+
+- npm v9+
 
-```sh
-npx nx g @nx/js:lib packages/pkg1 --publishable --importPath=@my-org/pkg1
+### Installation
+```bash
+npm install
 ```
 
-## Run tasks
-
-To build the library use:
-
-```sh
-npx nx build pkg1
+### Environment Configuration
+Create a `.env` file in the root:
+```
+JWT_SECRET=super-secret-jwt-key-change-in-production
+JWT_EXPIRES_IN=7d
+DB_PATH=./taskdb.sqlite
 ```
 
-To run any task with Nx use:
-
-```sh
-npx nx <target> <project-name>
+### Running the Applications
+Start the backend (runs on http://localhost:3000):
+```bash
+npx nx serve api
 ```
 
-These targets are either [inferred automatically](https://nx.dev/concepts/inferred-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or defined in the `project.json` or `package.json` files.
-
-[More about running tasks in the docs &raquo;](https://nx.dev/features/run-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Versioning and releasing
-
-To version and release the library use
-
-```
-npx nx release
+Start the frontend (runs on http://localhost:4200):
+```bash
+npx nx serve dashboard
 ```
 
-Pass `--dry-run` to see what would happen without actually releasing the library.
+---
 
-[Learn more about Nx release &raquo;](https://nx.dev/features/manage-releases?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+## Architecture Overview
 
-## Keep TypeScript project references up to date
-
-Nx automatically updates TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) in `tsconfig.json` files to ensure they remain accurate based on your project dependencies (`import` or `require` statements). This sync is automatically done when running tasks such as `build` or `typecheck`, which require updated references to function correctly.
-
-To manually trigger the process to sync the project graph dependencies information to the TypeScript project references, run the following command:
-
-```sh
-npx nx sync
+### NX Monorepo Layout
+```
+apps/
+  api/          → NestJS backend (REST API, JWT auth, RBAC, TypeORM)
+  dashboard/    → Angular frontend (login, task dashboard)
+libs/
+  data/         → Shared TypeScript interfaces and enums (ITask, IUser, Role, TaskStatus)
+  auth/         → Shared RBAC logic (hasRequiredRole, canModifyTask)
 ```
 
-You can enforce that the TypeScript project references are always in the correct state when running in CI by adding a step to your CI job configuration that runs the following command:
+The monorepo structure allows shared code between backend and frontend via `@org/data` and `@org/auth` packages. This ensures type safety across the entire stack — if a data shape changes, both apps are updated automatically.
 
-```sh
-npx nx sync:check
+---
+
+## Data Model
+
+### Entities
+
+**User**
+- id, email, password (bcrypt hashed), role (owner/admin/viewer), organizationId
+
+**Task**
+- id, title, description, status (todo/in_progress/done), category (work/personal/other), order, organizationId, createdById
+
+**Organization**
+- id, name, parentId (supports 2-level hierarchy)
+
+**AuditLog**
+- id, userId, action, resource, resourceId, createdAt
+
+### ERD
+```
+Organization (1) ──── (many) User
+Organization (1) ──── (many) Task
+User (1) ──── (many) Task [createdById]
+User (1) ──── (many) AuditLog
 ```
 
-[Learn more about nx sync](https://nx.dev/reference/nx-commands#sync)
+---
 
-## Nx Cloud
+## Access Control Implementation
 
-Nx Cloud ensures a [fast and scalable CI](https://nx.dev/ci/intro/why-nx-cloud?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) pipeline. It includes features such as:
+### Roles
+| Role   | Can Do |
+|--------|--------|
+| Owner  | Full access — create, read, update, delete all tasks in org, view audit logs |
+| Admin  | Same as Owner |
+| Viewer | Can only create tasks and view/edit their own tasks, no audit log access |
 
-- [Remote caching](https://nx.dev/ci/features/remote-cache?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task distribution across multiple machines](https://nx.dev/ci/features/distribute-task-execution?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Automated e2e test splitting](https://nx.dev/ci/features/split-e2e-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task flakiness detection and rerunning](https://nx.dev/ci/features/flaky-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-### Set up CI (non-Github Actions CI)
-
-**Note:** This is only required if your CI provider is not GitHub Actions.
-
-Use the following command to configure a CI workflow for your workspace:
-
-```sh
-npx nx g ci-workflow
+### Role Hierarchy
+```
+Owner (3) > Admin (2) > Viewer (1)
 ```
 
-[Learn more about Nx on CI](https://nx.dev/ci/intro/ci-with-nx#ready-get-started-with-your-provider?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+### How it works
+1. User logs in → receives JWT token containing `{ id, email, role, organizationId }`
+2. Every protected request includes the token in the `Authorization: Bearer <token>` header
+3. `JwtAuthGuard` verifies the token on every request
+4. `JwtStrategy` extracts user info from the token and attaches it to `req.user`
+5. Service methods check role using `canModifyTask()` from `@org/auth` before allowing mutations
+6. Task visibility is scoped to the user's `organizationId` — users cannot see tasks from other organizations
 
-## Install Nx Console
+---
 
-Nx Console is an editor extension that enriches your developer experience. It lets you run tasks, generate code, and improves code autocompletion in your IDE. It is available for VSCode and IntelliJ.
+## API Documentation
 
-[Install Nx Console &raquo;](https://nx.dev/getting-started/editor-setup?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+### Auth Endpoints
 
-## Useful links
+**POST /auth/register**
+```json
+Request:  { "email": "user@test.com", "password": "pass123", "role": "owner", "organizationId": 1 }
+Response: { "message": "User created successfully" }
+```
 
-Learn more:
+**POST /auth/login**
+```json
+Request:  { "email": "user@test.com", "password": "pass123" }
+Response: { "access_token": "eyJhbG..." }
+```
 
-- [Learn more about this workspace setup](https://nx.dev/nx-api/js?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Learn about Nx on CI](https://nx.dev/ci/intro/ci-with-nx?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Releasing Packages with Nx release](https://nx.dev/features/manage-releases?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [What are Nx plugins?](https://nx.dev/concepts/nx-plugins?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+### Task Endpoints (all require Authorization header)
 
-And join the Nx community:
+**POST /tasks**
+```json
+Request:  { "title": "My task", "description": "Details", "category": "work" }
+Response: { "id": 1, "title": "My task", "status": "todo", ... }
+```
 
-- [Discord](https://go.nx.dev/community)
-- [Follow us on X](https://twitter.com/nxdevtools) or [LinkedIn](https://www.linkedin.com/company/nrwl)
-- [Our Youtube channel](https://www.youtube.com/@nxdevtools)
-- [Our blog](https://nx.dev/blog?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+**GET /tasks**
+```json
+Response: [{ "id": 1, "title": "My task", "status": "todo", ... }]
+```
+
+**PUT /tasks/:id**
+```json
+Request:  { "status": "in_progress" }
+Response: { "id": 1, "status": "in_progress", ... }
+```
+
+**DELETE /tasks/:id**
+```json
+Response: { "message": "Task deleted" }
+```
+
+**GET /audit-log** (Owner and Admin only)
+```json
+Response: [{ "userId": 1, "action": "CREATE", "resource": "task", "resourceId": 1, "createdAt": "..." }]
+```
+
+---
+
+## Testing
+```bash
+# Run backend tests
+npx nx test api
+
+# Run frontend tests
+npx nx test dashboard
+```
+
+---
+
+## Tradeoffs & Unfinished Areas
+
+- **SQLite** was used instead of PostgreSQL for simplicity. Production would use PostgreSQL.
+- **Foreign key constraints** were removed from entities to simplify SQLite setup. Production would enforce these.
+- **Organization creation** is not exposed via API — organizationId is passed manually at registration. Production would have an org management flow.
+- **Drag and drop** reordering is not implemented — the `order` field exists on Task but UI reordering was deprioritized in favor of correct RBAC implementation.
+- **JWT refresh tokens** not implemented — tokens expire after 7 days. Production would use refresh token rotation.
+
+---
+
+## Future Considerations
+
+- **JWT refresh tokens** — implement sliding sessions with refresh token rotation
+- **CSRF protection** — add CSRF tokens for state-mutating requests
+- **RBAC caching** — cache permission checks in Redis to avoid repeated DB lookups
+- **Role delegation** — allow Owners to promote/demote users
+- **PostgreSQL** — migrate from SQLite for production scalability
+- **Rate limiting** — prevent brute force attacks on auth endpoints
